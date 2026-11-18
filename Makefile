@@ -11,8 +11,8 @@ LOCAL ?=
 IMAGE ?= t3kton/contractor
 TAG ?= latest
 
-# only the repos the respkgs are built from, the packages come from the PPA
-REPOS := contractor_plugins resources
+# the repos the respkgs (and the kubernetes operator) are built from, the packages come from the PPA
+REPOS := contractor_plugins resources kubernetes
 
 all: image
 

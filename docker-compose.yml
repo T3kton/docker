@@ -64,7 +64,89 @@ services:
       - contractor
     restart: "no"
 
+  # ---- the kubernetes profile: docker-compose --profile kubernetes up -d ----
+  # A control plane only k3s (API server and datastore, no nodes, so nothing can
+  # run pods), the t3kton operator running next to it, and the Structure CRD.
+  # The operator turns Structure resources into contractor jobs, see the README.
+  k3s:
+    image: rancher/k3s:latest
+    profiles: [ kubernetes ]
+    command: server --disable-agent --disable-cloud-controller --disable-network-policy --disable=traefik,servicelb,metrics-server,coredns,local-storage --write-kubeconfig-mode=644
+    privileged: true
+    tmpfs:
+      - /run
+      - /var/run
+    volumes:
+      - k3s_data:/var/lib/rancher/k3s
+      - k3s_config:/etc/rancher/k3s
+    restart: unless-stopped
+
+  # installs the CRD, then exits
+  k8s-setup:
+    image: rancher/k3s:latest
+    profiles: [ kubernetes ]
+    network_mode: service:k3s
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until kubectl apply -f /crd; do sleep 3; done
+        sed "s|CA_BUNDLE|$$(base64 /certs/tls.crt | tr -d '\n')|" /k8s-webhooks.yaml | kubectl apply -f -
+    environment:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+    volumes:
+      - k3s_config:/etc/rancher/k3s:ro
+      - k8s_certs:/certs:ro
+      - ./src/kubernetes/config/crd/bases:/crd:ro
+      - ./k8s-webhooks.yaml:/k8s-webhooks.yaml:ro
+    depends_on:
+      - k3s
+      - k8s-certs
+    restart: "no"
+
+  # a self signed certificate for the operator's webhooks (instead of
+  # cert-manager), then exits
+  k8s-certs:
+    image: alpine/openssl:latest
+    profiles: [ kubernetes ]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        [ -f /certs/tls.crt ] || openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+          -subj /CN=t3kton-operator -addext subjectAltName=IP:127.0.0.1 \
+          -keyout /certs/tls.key -out /certs/tls.crt
+        chmod 644 /certs/tls.key
+    volumes:
+      - k8s_certs:/certs
+    restart: "no"
+
+  # shares k3s's network so the kubeconfig's https://127.0.0.1:6443 works as is,
+  # and so does the apiserver's call to the webhooks on 127.0.0.1:9443
+  operator:
+    image: t3kton/operator:latest
+    build: src/kubernetes
+    profiles: [ kubernetes ]
+    network_mode: service:k3s
+    command: [ "--webhook-cert-path=/certs" ]
+    environment:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      CONTRACTOR_HOST: http://contractor
+      CONTRACTOR_USERNAME: root
+      CONTRACTOR_PASSWORD: ${ROOT_PASSWORD:-root}
+    volumes:
+      - k3s_config:/etc/rancher/k3s:ro
+      - k8s_certs:/certs:ro
+    depends_on:
+      - k3s
+      - k8s-certs
+      - contractor
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   mongo_data:
   contractor_data:
+  k3s_data:
+  k3s_config:
+  k8s_certs:

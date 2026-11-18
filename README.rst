@@ -37,6 +37,124 @@ ones.  Nothing is built, use the UI or ``contractorcli`` (it is in the image, ie
 ``docker-compose exec contractor contractorcli ...``, see ``load_demo_data`` for the
 config it needs) to start jobs on them.  Running it again skips what is already there.
 
+Talking to contractor
+~~~~~~~~~~~~~~~~~~~~~
+
+There are a few ways to work with the demo, here is the same sort of thing with each.
+
+**curl**
+
+The API is HTTP and JSON (called CInP).  It needs the ``Cinp-Version: 2.0`` header (older
+examples may show a different version, they will get "Invalid CInP Protocol Version"),
+and uses a few verbs curl is not used to: ``LIST``, ``GET``, ``CREATE`` and ``CALL``.  Log in,
+the result is a token, which goes in the headers along with the user name::
+
+  CHOST=http://localhost:8080
+  CINP=( -s -H 'Cinp-Version: 2.0' -H 'Content-Type: application/json' )
+  TOKEN=$(curl "${CINP[@]}" -X CALL -d '{"username":"root","password":"root"}' $CHOST/api/v1/Auth/User\(login\) | tr -d '"')
+  CINP+=( -H "Auth-Id: root" -H "Auth-Token: $TOKEN" )
+
+  curl "${CINP[@]}" -X CALL -d '{}' $CHOST/api/v1/Auth/User\(whoami\)
+
+Look at the structures and one of the foundations::
+
+  curl "${CINP[@]}" -X LIST -H 'Count: 20' -H 'Position: 0' $CHOST/api/v1/Building/Structure
+  curl "${CINP[@]}" -X GET $CHOST/api/v1/Building/Structure:2:
+  curl "${CINP[@]}" -X GET $CHOST/api/v1/Building/Foundation:test01:
+
+Create a new Test foundation, give it an interface on the ``main`` network, and a structure
+(the id of what is created is in the ``Object-Id`` header, use ``curl -i`` to see it)::
+
+  curl -i "${CINP[@]}" -X CREATE -d '{"locator":"curl01","site":"/api/v1/Site/Site:site1:","blueprint":"/api/v1/BluePrint/FoundationBluePrint:test-foundation-base:"}' $CHOST/api/v1/Test/TestFoundation
+  curl -i "${CINP[@]}" -X CREATE -d '{"foundation":"/api/v1/Building/Foundation:curl01:","name":"eth0","physical_location":"eth0","network":"/api/v1/Utilities/Network:1:","is_provisioning":true}' $CHOST/api/v1/Utilities/RealNetworkInterface
+  curl -i "${CINP[@]}" -X CREATE -d '{"hostname":"curl01","site":"/api/v1/Site/Site:site1:","blueprint":"/api/v1/BluePrint/StructureBluePrint:test-structure-base:","foundation":"/api/v1/Building/Foundation:curl01:"}' $CHOST/api/v1/Building/Structure
+
+Start a create job on a foundation (the result is the job id), and see where it is, then log out::
+
+  curl "${CINP[@]}" -X CALL -d '{}' "$CHOST/api/v1/Building/Foundation:test01:(doCreate)"
+  curl "${CINP[@]}" -X CALL -d '{}' "$CHOST/api/v1/Building/Foundation:test01:(getJob)"
+  curl "${CINP[@]}" -X GET $CHOST/api/v1/Foreman/FoundationJob:1:
+  curl "${CINP[@]}" -X CALL -d '{}' $CHOST/api/v1/Auth/User\(logout\)
+
+NOTE: a foundation's create job does not start until the foundation is "located",
+the job stays in the ``waiting`` state (``can_start`` is ``False``) until then.
+Foundations get located when they belong to a built complex, or by a cartographer
+(bare metal), there is no API call to do it by hand, so for the demo's standalone
+Test and Manual foundations the jobs will wait.
+
+See https://t3kton.github.io/contractor/api.html for everything the API can do.
+
+**contractorcli**
+
+``contractorcli`` is in the contractor container, and is already set up to talk to
+contractor as ``root``, so there is nothing to install or configure::
+
+  docker-compose exec contractor contractorcli structure list
+  docker-compose exec contractor contractorcli foundation get test01
+  docker-compose exec contractor contractorcli foundation test create -s site1 -l cli01 -b test-foundation-base
+  docker-compose exec contractor contractorcli foundation job do-create test01
+  docker-compose exec contractor contractorcli foundation joblog test01
+
+If you will be using it a lot, an alias saves some typing, and ``shell`` gives you an
+interactive prompt (it needs the terminal, so leave out the ``-T`` if you add one)::
+
+  alias contractorcli='docker-compose exec contractor contractorcli'
+  contractorcli shell
+
+To run it from your own machine instead, download the binary from
+https://github.com/T3kton/contractorcli/releases/latest (it is built for Linux, so on
+macOS or Windows use the container), put it on your path, and create ``~/.contractorcli.ini``::
+
+  [contractor]
+  host: http://localhost:8080
+  username: root
+  password: root
+
+See https://t3kton.github.io/contractor/contractorcli.html for the commands.
+
+Kubernetes
+~~~~~~~~~~
+
+The third interface is the ``Structure`` custom resource from the kubernetes operator
+(https://github.com/t3kton/kubernetes).  It is optional, start the demo with the
+``kubernetes`` profile (``make src`` first if you have not built the image, the operator is
+built from ``src/kubernetes``)::
+
+  docker-compose --profile kubernetes up -d --build
+
+That adds ``k3s``, a control plane only Kubernetes (API server and datastore, no nodes,
+so it can not run pods and is nowhere near a real cluster), the ``operator``, and two
+one time containers that exit when done: ``k8s-certs`` makes a self signed certificate for the
+operator's webhooks (instead of cert-manager) and ``k8s-setup`` installs the CRD and the
+webhook configuration (``k8s-webhooks.yaml``).  ``kubectl`` is in the k3s container, nothing
+is needed on the host.  The operator logs in to contractor as ``root``.
+
+The webhooks are on, so ``spec: {id: 2}`` is enough, the ``state`` and ``blueprint`` are filled
+in from contractor, and the operator refuses changes contractor would not allow.  Adopt ``test01``
+(the ``id`` is in ``contractorcli structure list``)::
+
+  docker-compose exec -T k3s kubectl apply -f - << EOF
+  apiVersion: contractor.t3kton.com/v1
+  kind: Structure
+  metadata:
+    name: test01
+  spec:
+    id: 2
+  EOF
+
+  docker-compose exec k3s kubectl get structures -o wide
+
+The webhooks need contractor to check against, so right after a ``up`` the first apply
+can be refused with "unable to connect to contractor", wait for contractor to be healthy.
+
+Setting ``state: built`` starts the ``create`` job in contractor, ``planned`` starts a ``destroy``,
+the job shows up in ``kubectl get structures`` and in the contractor UI::
+
+  docker-compose exec k3s kubectl patch structure test01 --type merge -p '{"spec":{"state":"built"}}'
+
+While it is built, trying to change the ``blueprint`` or ``kubectl delete`` it is refused by
+the validation webhook, set the state back to ``planned`` first.
+
 Full
 ----
 

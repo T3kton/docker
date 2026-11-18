@@ -27,6 +27,7 @@
 # Files:
 #   /respkgs/*.respkg                             installed after the built in ones, ie: the disks packages
 #   /config/subcontractor.conf                    if present, used as is for subcontractor and dhcpd
+#   ~/.contractorcli.ini                          written for the contractor role, host http://127.0.0.1, user root
 
 set -e
 
@@ -189,9 +190,17 @@ supervise()  # "name:command"...  runs each in the background, exits when any of
   exit 1
 }
 
+contractorcli_config()
+{
+  # so "docker-compose exec contractor contractorcli ..." works without any setup
+  printf '[contractor]\nhost: http://127.0.0.1\nusername: root\npassword: %s\n' "$ROOT_PASSWORD" > "$HOME/.contractorcli.ini"
+  chmod 600 "$HOME/.contractorcli.ini"
+}
+
 run_contractor()
 {
   contractor_config
+  contractorcli_config
 
   wait_for "$DB_HOST" "$DB_PORT" "postgres"
   wait_for $( url_host_port "$MONGO_HOST" 27017 ) "mongo"

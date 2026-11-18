@@ -1,0 +1,40 @@
+# The operator's webhooks for the demo: config/webhook/manifests.yaml with the
+# service replaced by the operator's address, it shares the k3s network.  Not
+# applied as is, k8s-setup (docker-compose.yml) fills in CA_BUNDLE, the base64
+# of the self signed certificate the operator serves.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: t3kton-mutating
+webhooks:
+- admissionReviewVersions: [ v1 ]
+  clientConfig:
+    url: https://127.0.0.1:9443/mutate-contractor-t3kton-com-v1-structure
+    caBundle: CA_BUNDLE
+  failurePolicy: Fail
+  name: mstructure-v1.kb.io
+  rules:
+  - apiGroups: [ contractor.t3kton.com ]
+    apiVersions: [ v1 ]
+    operations: [ CREATE ]
+    resources: [ structures ]
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: t3kton-validating
+webhooks:
+- admissionReviewVersions: [ v1 ]
+  clientConfig:
+    url: https://127.0.0.1:9443/validate-contractor-t3kton-com-v1-structure
+    caBundle: CA_BUNDLE
+  failurePolicy: Fail
+  name: vstructure-v1.kb.io
+  rules:
+  - apiGroups: [ contractor.t3kton.com ]
+    apiVersions: [ v1 ]
+    operations: [ CREATE, UPDATE, DELETE ]
+    resources: [ structures ]
+  sideEffects: None

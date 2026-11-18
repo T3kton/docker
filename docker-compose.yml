@@ -52,6 +52,18 @@ services:
       - contractor
     restart: unless-stopped
 
+  # a one time job, adds some Test and Manual foundations and structures, see
+  # load_demo_data, it exits when done
+  demo-data:
+    image: t3kton/contractor:latest
+    command: load-demo-data
+    environment:
+      CONTRACTOR_URL: http://contractor
+      ROOT_PASSWORD: ${ROOT_PASSWORD:-root}
+    depends_on:
+      - contractor
+    restart: "no"
+
 volumes:
   postgres_data:
   mongo_data:

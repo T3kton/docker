@@ -21,14 +21,14 @@ RUN apt-get update && \
 COPY src/resources /src/resources
 
 RUN mkdir /respkgs && \
-    make -C /src/resources respkg && \
+    make -C /src/resources -j5 respkg && \
     mv /src/resources/*.respkg /respkgs
 
 # the plugin respkgs, they are small, the ones not enabled by default can be
 # installed later with "respkg -i"
 COPY src/contractor_plugins /src/contractor_plugins
 
-RUN make -C /src/contractor_plugins respkg && \
+RUN make -C /src/contractor_plugins -j5 respkg && \
     mv /src/contractor_plugins/*.respkg /respkgs
 
 
@@ -45,7 +45,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin
     apt-get update && \
     apt-get install -y --no-install-recommends software-properties-common ca-certificates curl tzdata && \
     add-apt-repository -y ppa:pnhowe/t3kton && \
-    apt-get install -y --no-install-recommends contractor contractor-plugins subcontractor subcontractor-plugins respkg bind9 iproute2 cron tftpd-hpa python3-pysnmp4 python3-pyasyncore && \
+    apt-get install -y --no-install-recommends contractor contractor-plugins subcontractor subcontractor-plugins respkg bind9 iproute2 cron tftpd-hpa jq python3-pysnmp4 python3-pyasyncore && \
     /usr/lib/contractor/setup/apache_setup --no-proxy && \
     apt-get purge -y software-properties-common && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /usr/bin/systemctl && \
@@ -55,8 +55,13 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin
 # systemctl is left as a no-op in /usr/local/bin, apache_setup calls it and
 # apache is started by the entrypoint
 
+# contractorcli is not in the PPA, the release is a single static binary
+ARG CONTRACTORCLI_URL=https://github.com/T3kton/contractorcli/releases/latest/download/contractorcli
+RUN curl -fsSL -o /usr/local/bin/contractorcli "$CONTRACTORCLI_URL" && chmod 755 /usr/local/bin/contractorcli
+
 COPY --from=respkg-build /respkgs /usr/share/contractor-respkgs
 COPY entrypoint.sh /entrypoint.sh
+COPY load_demo_data /usr/local/bin/load-demo-data
 
 VOLUME /var/lib/contractor
 EXPOSE 80/tcp

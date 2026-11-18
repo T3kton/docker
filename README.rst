@@ -29,6 +29,14 @@ The API is at http://localhost:8080/api/v1/, see https://t3kton.github.io/contra
 The first start takes a bit while the database is set up.  ``docker-compose down -v``
 removes everything, including the database.
 
+The ``demo-data`` service runs once when contractor is up (and shows as exited, that
+is normal) and adds some things to look at: foundations ``test01`` - ``test04`` and
+``manual01`` - ``manual04``, each with a structure, one interface on the ``main``
+network and an address, at offsets 40-43 for the test ones and 50-53 for the manual
+ones.  Nothing is built, use the UI or ``contractorcli`` (it is in the image, ie:
+``docker-compose exec contractor contractorcli ...``, see ``load_demo_data`` for the
+config it needs) to start jobs on them.  Running it again skips what is already there.
+
 Full
 ----
 

@@ -1,0 +1,98 @@
+#!/bin/bash
+# Loads demo foundations and structures into a running contractor, using
+# contractorcli: test01 - test04 (Test plugin) and manual01 - manual04 (Manual
+# plugin).  Each gets one interface on the main network, and one address:
+# the test ones start at offset 40, the manual ones at 50.  Nothing is built,
+# no jobs are started.
+#
+# Safe to run again, anything that is already there is skipped.
+#
+# Settings (environment):
+#   CONTRACTOR_URL     default http://contractor
+#   ROOT_PASSWORD      default root
+#   SITE_NAME          default site1
+#   NETWORK_NAME       the network to use, default main
+#   DEMO_COUNT         how many of each, default 4
+#   DEMO_TEST_START    first address offset for the test ones, default 40
+#   DEMO_MANUAL_START  first address offset for the manual ones, default 50
+
+set -e
+
+CONTRACTOR_URL="${CONTRACTOR_URL:-http://contractor}"
+ROOT_PASSWORD="${ROOT_PASSWORD:-root}"
+SITE_NAME="${SITE_NAME:-site1}"
+NETWORK_NAME="${NETWORK_NAME:-main}"
+DEMO_COUNT="${DEMO_COUNT:-4}"
+DEMO_TEST_START="${DEMO_TEST_START:-40}"
+DEMO_MANUAL_START="${DEMO_MANUAL_START:-50}"
+
+# contractorcli reads its connection information from here, NOTE: this
+# replaces any existing file
+CONFIG="$HOME/.contractorcli.ini"
+printf '[contractor]\nhost: %s\nusername: root\npassword: %s\n' "$CONTRACTOR_URL" "$ROOT_PASSWORD" > "$CONFIG"
+chmod 600 "$CONFIG"
+
+echo "Waiting for contractor at $CONTRACTOR_URL..."
+for i in $( seq 1 60 )
+do
+  if error="$( contractorcli site list 2>&1 )"
+  then
+    break
+  fi
+  if [ "$i" = "60" ]
+  then
+    echo "Timed out waiting for contractor, last error: $error" >&2
+    exit 1
+  fi
+  sleep 3
+done
+
+read -r NETWORK_ID ADDRESS_BLOCK_ID <<< "$( contractorcli --json network list | jq -r --arg name "$NETWORK_NAME" '.[] | select( .name == $name ) | "\( .id ) \( .address_block_list[ 0 ] | split( ":" )[ 1 ] )"' )"
+echo "Using network $NETWORK_NAME ($NETWORK_ID), address block $ADDRESS_BLOCK_ID"
+
+EXISTING="$( contractorcli --json foundation list | jq -r '.[].locator' )"
+
+# shows the command and its output, so whoever is watching can see what is
+# being done
+run()
+{
+  echo "+ contractorcli $*"
+  contractorcli "$@"
+}
+
+create()  # type(test|manual) name offset
+{
+  local type="$1" name="$2" offset="$3"
+
+  echo
+  echo "=== $name ==="
+
+  if echo "$EXISTING" | grep -qx "$name"
+  then
+    echo "$name: already there, skipped"
+    return
+  fi
+
+  run foundation "$type" create -s "$SITE_NAME" -l "$name" -b "$type-foundation-base"
+  run foundation interface create "$name" -n eth0 -y eth0 -t "$NETWORK_ID" -p
+  run structure create -s "$SITE_NAME" -f "$name" -o "$name" -b "$type-structure-base"
+
+  # the structure's id is needed for the address, the create above does not
+  # give it in a form that is easy to pick out
+  local structure_id
+  structure_id="$( contractorcli --json structure list | jq -r --arg hostname "$name" '.[] | select( .hostname == $hostname ) | .id' )"
+  run structure address add "$structure_id" -a "$ADDRESS_BLOCK_ID" -n eth0 -o "$offset" -p
+  echo "$name: created, structure $structure_id, offset $offset"
+}
+
+for i in $( seq 1 "$DEMO_COUNT" )
+do
+  create test "$( printf 'test%02d' "$i" )" $(( DEMO_TEST_START + i - 1 ))
+done
+
+for i in $( seq 1 "$DEMO_COUNT" )
+do
+  create manual "$( printf 'manual%02d' "$i" )" $(( DEMO_MANUAL_START + i - 1 ))
+done
+
+echo "Done."

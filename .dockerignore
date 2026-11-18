@@ -1,0 +1,6 @@
+.git
+*.md
+*.rst
+docker-compose.yml
+Makefile
+src/*/.git

@@ -1,0 +1,6 @@
+src/
+full.env
+respkgs/*
+!respkgs/.gitkeep
+config/*
+!config/.gitkeep

@@ -1,0 +1,103 @@
+# Contractor as a real install: the contractor "host" (UI/API, static, caching
+# proxy, DNS, TFTP), subcontractor and the DHCP server.  Linux only, the
+# containers use the host's network and serve on the interface named by
+# LISTEN_INTERFACE, which should be the isolated network machines are built on.
+# Ports used on the host: 53, 67/udp, 69/udp, 80, 3128, plus 5432 and 27017
+# on 127.0.0.1.
+#
+#   cp full.env.example full.env   # and edit
+#   docker-compose -f docker-compose.full.yml --env-file full.env up -d
+#
+# See README.rst
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: contractor
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-contractor}
+      POSTGRES_DB: contractor
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:8
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  contractor:
+    image: t3kton/contractor:latest
+    build: .
+    command: contractor
+    network_mode: host
+    environment:
+      FULL: "1"
+      DB_HOST: 127.0.0.1
+      DB_PASSWORD: ${DB_PASSWORD:-contractor}
+      MONGO_HOST: mongodb://127.0.0.1:27017/
+      ROOT_PASSWORD: ${ROOT_PASSWORD:?set ROOT_PASSWORD, the password for the contractor root user}
+      PRIMARY_INTERFACE: ${LISTEN_INTERFACE:?set LISTEN_INTERFACE, the interface of the network contractor serves}
+      SITE_NAME: ${SITE_NAME:-site1}
+      SITE_DOMAIN: ${SITE_DOMAIN:-site1.test}
+      NTP_SERVER: ${NTP_SERVER:-ntp.ubuntu.com}
+      UPSTREAM_PROXY: ${UPSTREAM_PROXY:-}
+      IP_RESERVATION: ${IP_RESERVATION:-}
+      CONTRACTOR_PLUGINS: ${CONTRACTOR_PLUGINS:-}
+    volumes:
+      - contractor_data:/var/lib/contractor
+      - bind_data:/etc/bind
+      - static_data:/var/www/static
+      - tftp_data:/srv/tftp
+      - ${RESPKG_DIR:-./respkgs}:/respkgs:ro
+    depends_on:
+      - postgres
+      - mongo
+    restart: unless-stopped
+
+  subcontractor:
+    image: t3kton/contractor:latest
+    command: subcontractor
+    network_mode: host
+    environment:
+      CONTRACTOR_URL: http://127.0.0.1
+      SITE_NAME: ${SITE_NAME:-site1}
+      SUBCONTRACTOR_MODULES: ${SUBCONTRACTOR_MODULES:-manual,iputils}
+    volumes:
+      - ${SUBCONTRACTOR_CONFIG_DIR:-./config}:/config:ro
+    depends_on:
+      - contractor
+    restart: unless-stopped
+
+  dhcpd:
+    image: t3kton/contractor:latest
+    command: dhcpd
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      CONTRACTOR_URL: http://127.0.0.1
+      SITE_NAME: ${SITE_NAME:-site1}
+      LISTEN_INTERFACE: ${LISTEN_INTERFACE:?set LISTEN_INTERFACE, the interface of the network contractor serves}
+      TFTP_SERVER: ${TFTP_SERVER:-}
+    volumes:
+      - dhcpd_data:/var/lib/dhcpd
+      - ${SUBCONTRACTOR_CONFIG_DIR:-./config}:/config:ro
+    depends_on:
+      - contractor
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mongo_data:
+  contractor_data:
+  bind_data:
+  static_data:
+  tftp_data:
+  dhcpd_data:
